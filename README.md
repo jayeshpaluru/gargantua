@@ -16,7 +16,7 @@ The included `gargantua.jpeg` is the visual reference this repo is tuned toward.
 ## Requirements
 
 - Rust toolchain (`rustup`, `cargo`)
-- macOS + Apple Silicon GPU recommended for realtime (`Metal`)
+- macOS + Apple Silicon GPU recommended for realtime (`Metal`), I wrote it specifically more my M2 Max MacBook Pro with metal integration
 
 ## Build
 
