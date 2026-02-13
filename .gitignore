@@ -1,0 +1,8 @@
+target/
+frames/
+*.png
+*.jpg
+*.jpeg
+*.webp
+!.gitkeep
+!gargantua.jpeg
