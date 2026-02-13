@@ -240,29 +240,59 @@ fn physics_from_cli(cli: &Cli) -> Physics {
 fn render_cpu(cli: &Cli) -> Vec<u8> {
     let mut out = vec![0u8; (cli.width * cli.height * 4) as usize];
     let phys = physics_from_cli(cli);
+    let width = cli.width as usize;
+    let height = cli.height as usize;
+    let row_stride = width * 4;
+    let spp = cli.spp;
+    let fov_y = cli.fov_deg.to_radians();
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(height.max(1));
+    let rows_per_worker = height.div_ceil(workers);
 
-    for y in 0..cli.height {
-        for x in 0..cli.width {
-            let mut color = Vec3 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            };
-
-            for s in 0..cli.spp {
-                let (jx, jy) = sample_jitter_u32(x, y, s, 0);
-                let dir = pixel_dir_camera(x, y, cli.width, cli.height, cli.fov_deg.to_radians(), jx, jy);
-                color = color.add(trace_ray(dir, phys));
+    std::thread::scope(|scope| {
+        let mut remaining = out.as_mut_slice();
+        for worker in 0..workers {
+            let start_row = worker * rows_per_worker;
+            if start_row >= height {
+                break;
             }
-            color = color.mul(1.0 / cli.spp as f32);
 
-            let idx = ((y * cli.width + x) * 4) as usize;
-            out[idx] = to_u8(color.x);
-            out[idx + 1] = to_u8(color.y);
-            out[idx + 2] = to_u8(color.z);
-            out[idx + 3] = 255;
+            let end_row = ((worker + 1) * rows_per_worker).min(height);
+            let worker_rows = end_row - start_row;
+            let worker_bytes = worker_rows * row_stride;
+            let (chunk, rest) = remaining.split_at_mut(worker_bytes);
+            remaining = rest;
+
+            scope.spawn(move || {
+                for local_y in 0..worker_rows {
+                    let y = (start_row + local_y) as u32;
+                    let row = &mut chunk[local_y * row_stride..(local_y + 1) * row_stride];
+                    for x in 0..cli.width {
+                        let mut color = Vec3 {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        };
+
+                        for s in 0..spp {
+                            let (jx, jy) = sample_jitter_u32(x, y, s, 0);
+                            let dir = pixel_dir_camera(x, y, cli.width, cli.height, fov_y, jx, jy);
+                            color = color.add(trace_ray(dir, phys));
+                        }
+                        color = color.mul(1.0 / spp as f32);
+
+                        let idx = (x as usize) * 4;
+                        row[idx] = to_u8(color.x);
+                        row[idx + 1] = to_u8(color.y);
+                        row[idx + 2] = to_u8(color.z);
+                        row[idx + 3] = 255;
+                    }
+                }
+            });
         }
-    }
+    });
 
     out
 }
