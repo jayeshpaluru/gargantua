@@ -33,6 +33,7 @@ fn U_height() -> u32 { return U.dims.y; }
 fn U_max_steps() -> u32 { return U.dims.z; }
 fn U_spp() -> u32 { return U.dims.w; }
 fn U_frame_index() -> u32 { return U.frame.x; }
+fn U_checkerboard() -> u32 { return U.frame.y; }
 fn U_fov_y_rad() -> f32 { return U.camera0.x; }
 fn U_spin() -> f32 { return U.camera0.y; }
 fn U_observer_r() -> f32 { return U.camera0.z; }
@@ -45,6 +46,7 @@ fn U_exposure() -> f32 { return U.camera2.x; }
 fn U_glow_strength() -> f32 { return U.camera2.y; }
 fn U_camera_yaw() -> f32 { return U.camera2.z; }
 fn U_camera_pitch() -> f32 { return U.camera2.w; }
+fn U_temporal_alpha() -> f32 { return U.jitter.z; }
 
 fn tone_map(v: f32) -> f32 {
   let x = max(v * U_exposure(), 0.0);
@@ -283,6 +285,22 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let aspect = f32(U_width()) / f32(U_height());
   let tan_half = tan(0.5 * U_fov_y_rad());
   let idx = gid.y * U_width() + gid.x;
+  let prev = textureLoad(accum_in, vec2<i32>(gid.xy), 0).rgb;
+
+  if (U_checkerboard() != 0u) {
+    let parity = (gid.x + gid.y + U_frame_index()) & 1u;
+    if (parity == 1u) {
+      let glow_prev = max(prev - vec3<f32>(0.55), vec3<f32>(0.0)) * U_glow_strength();
+      let final_prev = prev + glow_prev * glow_prev;
+      textureStore(accum_out, vec2<i32>(gid.xy), vec4<f32>(prev, 1.0));
+      textureStore(
+        display_out,
+        vec2<i32>(gid.xy),
+        vec4<f32>(tone_map(final_prev.x), tone_map(final_prev.y), tone_map(final_prev.z), 1.0)
+      );
+      return;
+    }
+  }
 
   var frame_sum = vec3<f32>(0.0, 0.0, 0.0);
   for (var s: u32 = 0u; s < U_spp(); s = s + 1u) {
@@ -311,9 +329,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let streak = pow(clamp(1.0 - abs(ny) * 28.0, 0.0, 1.0), 2.2) * smoothstep(0.22, 1.0, luma);
   sample = sample + vec3<f32>(1.0, 0.72, 0.48) * streak * 0.42;
 
-  let prev = textureLoad(accum_in, vec2<i32>(gid.xy), 0).rgb;
-  let n = f32(U_frame_index());
-  let accum = (prev * n + sample) / (n + 1.0);
+  let blend_alpha = clamp(U_temporal_alpha(), 0.03, 1.0);
+  let accum = prev * (1.0 - blend_alpha) + sample * blend_alpha;
 
   let glow = max(accum - vec3<f32>(0.55), vec3<f32>(0.0)) * U_glow_strength();
   let final_rgb = accum + glow * glow;

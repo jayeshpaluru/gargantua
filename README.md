@@ -7,6 +7,7 @@ The project targets an Interstellar-inspired look while keeping the core transpo
 - Observer tetrad ray initialization
 - Thin relativistic accretion disk with redshift/beaming terms
 - Temporal accumulation for realtime viewing
+- Realtime performance mode (checkerboard + temporal EMA)
 
 ## Reference Target
 
@@ -47,7 +48,24 @@ UI sliders also expose:
 - black hole spin, disk radii, emissivity
 - geodesic step controls
 - exposure + glow
+- temporal alpha
+- checkerboard tracing toggle
 - export frame sequence options
+
+### Realtime Performance Tuning 
+
+Use these settings first, then raise quality:
+- `Checkerboard tracing`: `ON`
+- `SPP`: `1`
+- `Max geodesic steps`: `1200 - 1800`
+- `Step size`: `0.035 - 0.05`
+- `Temporal alpha`: `0.18 - 0.30`
+- Resolution: start at `1280x720`, then scale upward
+
+For higher quality after reaching stable FPS:
+- Increase `SPP` to `2`
+- Increase `Max geodesic steps`
+- Lower `Step size`
 
 ## Offline Render (PNG)
 
@@ -68,6 +86,7 @@ If GPU initialization fails, the binary falls back to CPU and prints a warning.
 - This is a physically motivated renderer, not full GRMHD + radiative transfer.
 - The disk model is thin and parametric.
 - Visual tuning includes cinematic post terms (e.g., glow/streak behavior) to approach the film look.
+- Some post effects (photon-ring emphasis / anamorphic flare cues) are artistic approximations.
 
 ## Repository Layout
 

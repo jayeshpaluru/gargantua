@@ -110,14 +110,16 @@ struct RealtimeUniforms {
     glow_strength: f32,
     camera_yaw: f32,
     camera_pitch: f32,
+    checkerboard: u32,
+    temporal_alpha: f32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct RealtimeGpuUniforms {
     dims: [u32; 4],       // width, height, max_steps, spp
-    frame: [u32; 4],      // frame_index + padding
-    jitter: [f32; 4],     // jitter.xy + padding
+    frame: [u32; 4],      // frame_index, checkerboard, padding, padding
+    jitter: [f32; 4],     // jitter.xy, temporal_alpha, padding
     camera0: [f32; 4],    // fov, spin, observer_r, inclination
     camera1: [f32; 4],    // step, inner, outer, emissivity
     camera2: [f32; 4],    // exposure, glow, yaw, pitch
@@ -127,8 +129,8 @@ impl RealtimeUniforms {
     fn as_gpu(self) -> RealtimeGpuUniforms {
         RealtimeGpuUniforms {
             dims: [self.width, self.height, self.max_steps, self.spp],
-            frame: [self.frame_index, 0, 0, 0],
-            jitter: [self.jitter[0], self.jitter[1], 0.0, 0.0],
+            frame: [self.frame_index, self.checkerboard, 0, 0],
+            jitter: [self.jitter[0], self.jitter[1], self.temporal_alpha, 0.0],
             camera0: [self.fov_y_rad, self.spin, self.observer_r, self.inclination_rad],
             camera1: [self.step_size, self.disk_inner, self.disk_outer, self.emissivity_power],
             camera2: [self.exposure, self.glow_strength, self.camera_yaw, self.camera_pitch],
@@ -601,6 +603,8 @@ impl RealtimeState {
             glow_strength: 0.35,
             camera_yaw: 0.0,
             camera_pitch: 0.0,
+            checkerboard: 1,
+            temporal_alpha: 0.22,
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1220,6 +1224,8 @@ impl RealtimeState {
         self.uniforms.emissivity_power = self.uniforms.emissivity_power.clamp(1.0, 5.0);
         self.uniforms.exposure = self.uniforms.exposure.clamp(0.2, 3.0);
         self.uniforms.glow_strength = self.uniforms.glow_strength.clamp(0.0, 2.0);
+        self.uniforms.checkerboard = self.uniforms.checkerboard.min(1);
+        self.uniforms.temporal_alpha = self.uniforms.temporal_alpha.clamp(0.03, 1.0);
     }
 
     fn draw_controls_ui(
@@ -1233,24 +1239,42 @@ impl RealtimeState {
         fps_value: f32,
         frame_index: u32,
     ) {
-        egui::TopBottomPanel::top("stats").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Gargantua Live").strong().color(Color32::from_rgb(255, 213, 124)));
-                ui.separator();
-                ui.label(format!("{fps_value:.1} FPS"));
-                ui.separator();
-                ui.label(format!("Accumulated frames: {frame_index}"));
-                if *paused {
-                    ui.separator();
-                    ui.label(RichText::new("paused").color(Color32::from_rgb(255, 180, 70)));
-                }
-            });
-        });
-
-        egui::SidePanel::left("controls")
-            .resizable(false)
-            .default_width(300.0)
+        egui::Area::new("stats_overlay".into())
+            .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
             .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_premultiplied(8, 12, 20, 150))
+                    .rounding(egui::Rounding::same(8.0))
+                    .inner_margin(egui::Margin::same(8.0))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new("Gargantua Live")
+                                    .strong()
+                                    .color(Color32::from_rgb(255, 213, 124)),
+                            );
+                            ui.separator();
+                            ui.label(format!("{fps_value:.1} FPS"));
+                            ui.separator();
+                            ui.label(format!("Frames: {frame_index}"));
+                            if *paused {
+                                ui.separator();
+                                ui.label(RichText::new("paused").color(Color32::from_rgb(255, 180, 70)));
+                            }
+                        });
+                    });
+            });
+
+        egui::Window::new("Realtime Controls")
+            .anchor(egui::Align2::LEFT_TOP, [10.0, 52.0])
+            .resizable(true)
+            .default_width(280.0)
+            .default_open(false)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_premultiplied(9, 14, 22, 190))
+                    .show(ui, |ui| {
                 ui.heading("Realtime Controls");
                 ui.label("Physical and render controls update instantly.");
                 ui.separator();
@@ -1283,8 +1307,13 @@ impl RealtimeState {
                 ui.add(egui::Slider::new(&mut uniforms.max_steps, 400..=8000).text("Max geodesic steps"));
                 ui.add(egui::Slider::new(&mut uniforms.step_size, 0.005..=0.08).text("Step size"));
                 ui.add(egui::Slider::new(&mut uniforms.spp, 1..=16).text("Samples / pixel / frame"));
+                ui.add(egui::Slider::new(&mut uniforms.temporal_alpha, 0.05..=0.9).text("Temporal alpha"));
                 ui.add(egui::Slider::new(&mut uniforms.exposure, 0.4..=2.5).text("Exposure"));
                 ui.add(egui::Slider::new(&mut uniforms.glow_strength, 0.0..=1.3).text("Glow"));
+                let mut checker = uniforms.checkerboard != 0;
+                if ui.checkbox(&mut checker, "Checkerboard tracing (faster)").changed() {
+                    uniforms.checkerboard = if checker { 1 } else { 0 };
+                }
 
                 ui.separator();
                 if ui.button(if *paused { "Resume accumulation" } else { "Pause accumulation" }).clicked() {
@@ -1301,6 +1330,7 @@ impl RealtimeState {
                 if ui.button("Export PNG sequence").clicked() {
                     *export_clicked = true;
                 }
+                });
             });
     }
 
